@@ -1,27 +1,114 @@
 use std::env;
 
-use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    middleware::Logger,
+    web::{self, Data},
+    App, HttpResponse, HttpServer, Responder,
+};
 use anyhow::Context;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
+#[derive(Clone, Debug)]
+struct Config {
+    addr: String,
+    port: u16,
+    secret: String,
+}
+
+impl Config {
+    fn try_load() -> anyhow::Result<Self> {
+        let addr = env::var("GH_ARTIFACT_SYNC_ADDR")
+            .context("secret must be set through GH_ARTIFACT_SYNC_ADDR")?;
+
+        let port: u16 = env::var("GH_ARTIFACT_SYNC_PORT")
+            .context("secret must be set through GH_ARTIFACT_SYNC_PORT")?
+            .parse()
+            .context("port must be a valid unix port")?;
+
+        let secret = env::var("GH_ARTIFACT_SYNC_SECRET")
+            .context("secret must be set through GH_ARTIFACT_SYNC_SECRET")?;
+
+        Ok(Self { addr, port, secret })
+    }
+}
+
+fn verify_github_signature(payload: &[u8], secret: &[u8], signature: &[u8]) -> bool {
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret).unwrap();
+    mac.update(payload);
+    mac.verify_slice(signature).is_ok()
+}
 
 #[actix_web::post("/api/github/workflow")]
-async fn github_webhook(req_body: web::Bytes, req: actix_web::HttpRequest) -> impl Responder {
-    dbg!(req_body);
-    dbg!(req);
+async fn post_github_workflow(
+    data: Data<Config>,
+    req_body: web::Bytes,
+    req: actix_web::HttpRequest,
+) -> impl Responder {
+    //    dbg!(&data);
+    //    dbg!(&req_body);
+    //    dbg!(&req);
+
+    let signature_header = req.headers().get("X-Hub-Signature-256").unwrap();
+
+    let signature_str = signature_header
+        .to_str()
+        .unwrap()
+        .strip_prefix("sha256=")
+        .unwrap();
+
+    let signature = hex::decode(signature_str).unwrap();
+
+    //    dbg!(&signature_str);
+    //    dbg!(&signature);
+
+    //    dbg!(&data.secret);
+    //    dbg!(&data.secret.as_ref() as &[u8]);
+
+    if !verify_github_signature(&req_body, data.secret.as_ref(), &signature) {
+        return HttpResponse::Unauthorized();
+    }
 
     HttpResponse::Ok()
 }
 
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
-    let addr = env::var("LISTEN_ADDRESS").unwrap_or("localhost".into());
+    pretty_env_logger::init_custom_env("GH_ARTIFACT_SYNC_LOG");
 
-    let port: u16 = match env::var("LISTEN_PORT") {
-        Ok(port_str) => port_str.parse().context("port must be a valid unix port")?,
-        Err(_) => 5001,
+    let app_data = Data::new(Config::try_load()?);
+
+    let app_factory = {
+        let app_data = app_data.clone();
+
+        move || {
+            App::new()
+                .wrap(Logger::default())
+                .app_data(app_data.clone())
+                .service(post_github_workflow)
+        }
     };
 
-    Ok(HttpServer::new(|| App::new().service(github_webhook))
-        .bind((addr, port))?
+    Ok(HttpServer::new(app_factory)
+        .bind((app_data.addr.as_ref(), app_data.port))?
         .run()
         .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_github_signature_test() {
+        let secret: &[u8] = "It's a Secret to Everybody".as_ref();
+        let payload: &[u8] = "Hello, World!".as_ref();
+
+        let signature =
+            hex::decode("757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17")
+                .unwrap();
+        let signature: &[u8] = signature.as_ref();
+
+        assert!(verify_github_signature(payload, secret, signature))
+    }
 }
