@@ -1,12 +1,14 @@
 use std::env;
 
 use actix_web::{
+    http::header::HeaderMap,
     middleware::Logger,
     web::{self, Data},
     App, HttpResponse, HttpServer, Responder,
 };
 use anyhow::Context;
 use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
 #[derive(Clone, Debug)]
@@ -39,35 +41,79 @@ fn verify_github_signature(payload: &[u8], secret: &[u8], signature: &[u8]) -> b
     mac.verify_slice(signature).is_ok()
 }
 
+fn extract_github_signature(headers: &HeaderMap) -> Option<Vec<u8>> {
+    let signature_str = headers
+        .get("X-Hub-Signature-256")?
+        .to_str()
+        .ok()?
+        .strip_prefix("sha256=")?;
+
+    hex::decode(signature_str).ok()
+}
+
+fn extract_github_event(headers: &HeaderMap) -> Option<&str> {
+    headers.get("X-GitHub-Event")?.to_str().ok()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GithubWorkflowPayload {
+    action: String,
+    workflow_job: GithubWorkflowPayloadWorkflowJob,
+    repository: GithubWorkflowPayloadRepository,
+    organization: GithubWorkflowPayloadOrganization,
+    sender: GithubWorkflowPayloadSender,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GithubWorkflowPayloadWorkflowJob {
+    id: u64,
+    run_id: u64,
+    head_branch: String,
+    head_sha: String,
+    status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GithubWorkflowPayloadRepository {
+    id: u64,
+    name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GithubWorkflowPayloadOrganization {
+    id: u64,
+    login: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GithubWorkflowPayloadSender {
+    id: u64,
+    login: String,
+}
+
 #[actix_web::post("/api/github/workflow")]
 async fn post_github_workflow(
     data: Data<Config>,
     req_body: web::Bytes,
     req: actix_web::HttpRequest,
 ) -> impl Responder {
-    //    dbg!(&data);
-    //    dbg!(&req_body);
-    //    dbg!(&req);
+    match extract_github_signature(&req.headers()) {
+        Some(signature) if verify_github_signature(&req_body, data.secret.as_ref(), &signature) => {
+        }
+        _ => return HttpResponse::BadRequest(),
+    };
 
-    let signature_header = req.headers().get("X-Hub-Signature-256").unwrap();
+    match extract_github_event(&req.headers()) {
+        Some(event) if event == "workflow_job" => {}
+        _ => return HttpResponse::BadRequest(),
+    };
 
-    let signature_str = signature_header
-        .to_str()
-        .unwrap()
-        .strip_prefix("sha256=")
-        .unwrap();
+    let payload: GithubWorkflowPayload = match serde_json::from_slice(&req_body) {
+        Ok(x) => x,
+        _ => return HttpResponse::BadRequest(),
+    };
 
-    let signature = hex::decode(signature_str).unwrap();
-
-    //    dbg!(&signature_str);
-    //    dbg!(&signature);
-
-    //    dbg!(&data.secret);
-    //    dbg!(&data.secret.as_ref() as &[u8]);
-
-    if !verify_github_signature(&req_body, data.secret.as_ref(), &signature) {
-        return HttpResponse::Unauthorized();
-    }
+    dbg!(&payload);
 
     HttpResponse::Ok()
 }
