@@ -8,10 +8,7 @@ use actix_web::{
 };
 use anyhow::Context;
 use hmac::{Hmac, Mac};
-use reqwest::{
-    header::{self, HeaderValue},
-    Client,
-};
+use reqwest::{header::HeaderValue, Client};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
@@ -229,8 +226,6 @@ async fn post_github_workflow(
         }
     };
 
-    log::debug!("{:?}", &payload);
-
     if payload.workflow_job.status != "completed" {
         log::info!("the workflow isn't completed yet, ignoring it");
         return HttpResponse::NoContent();
@@ -289,7 +284,15 @@ async fn post_github_workflow(
             }
         };
 
-    log::info!("download done, extracting it");
+    match artifact_headers.get("Content-Type") {
+        Some(x) if x == "zip" => {
+            log::info!("downloaded artifact zip archive");
+        }
+        _ => {
+            log::warn!("response didn't wasn't a zip, cannot extract artifact");
+            return HttpResponse::InternalServerError();
+        }
+    };
 
     dbg!(&artifact_headers);
 
