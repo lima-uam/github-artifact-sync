@@ -1,14 +1,17 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 use actix_web::{
     http::header as actix_web_header,
     middleware::Logger,
-    web::{self, Data},
+    web::{self, Bytes, Data},
     App, HttpResponse, HttpServer, Responder,
 };
 use anyhow::Context;
 use hmac::{Hmac, Mac};
-use reqwest::{header::HeaderValue, Client};
+use reqwest::{
+    header::{self, HeaderValue},
+    Client,
+};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
@@ -18,29 +21,45 @@ struct Config {
     port: u16,
     secret: String,
     token: String,
+    branch: String,
+    artifact: String,
+    location: PathBuf,
 }
 
 impl Config {
     fn try_load() -> anyhow::Result<Self> {
         let addr = env::var("GH_ARTIFACT_SYNC_ADDR")
-            .context("secret must be set through GH_ARTIFACT_SYNC_ADDR")?;
+            .context("listen address must be set through GH_ARTIFACT_SYNC_ADDR")?;
 
         let port: u16 = env::var("GH_ARTIFACT_SYNC_PORT")
             .context("secret must be set through GH_ARTIFACT_SYNC_PORT")?
             .parse()
-            .context("port must be a valid unix port")?;
+            .context("listen port must be a valid unix port")?;
 
         let secret = env::var("GH_ARTIFACT_SYNC_SECRET")
-            .context("secret must be set through GH_ARTIFACT_SYNC_SECRET")?;
+            .context("webhook secret must be set through GH_ARTIFACT_SYNC_SECRET")?;
 
         let token = env::var("GH_ARTIFACT_SYNC_TOKEN")
-            .context("secret must be set through GH_ARTIFACT_SYNC_TOKEN")?;
+            .context("github token must be set through GH_ARTIFACT_SYNC_TOKEN")?;
+
+        let branch = env::var("GH_ARTIFACT_SYNC_BRANCH")
+            .context("branch name must be set through GH_ARTIFACT_SYNC_BRANCH")?;
+
+        let artifact = env::var("GH_ARTIFACT_SYNC_ARTIFACT")
+            .context("artifact name must be set through GH_ARTIFACT_SYNC_ARTIFACT")?;
+
+        let location = env::var("GH_ARTIFACT_SYNC_LOCATION")
+            .context("output location must be set through GH_ARTIFACT_SYNC_LOCATION")?
+            .parse()?;
 
         Ok(Self {
             addr,
             port,
             secret,
             token,
+            branch,
+            artifact,
+            location,
         })
     }
 }
@@ -112,12 +131,38 @@ struct WorkflowArtifactsResponse {
     artifacts: Vec<Artifact>,
 }
 
+fn build_github_client_and_headers(token: &str) -> Option<(Client, reqwest::header::HeaderMap)> {
+    let client = reqwest::Client::new();
+
+    let headers = {
+        let mut headers = reqwest::header::HeaderMap::new();
+
+        headers.insert(
+            "Accept",
+            HeaderValue::from_static("application/vnd.github+json"),
+        );
+        headers.insert(
+            "X-GitHub-Api-Version",
+            HeaderValue::from_static("2022-11-28"),
+        );
+        headers.insert(
+            "User-Agent",
+            HeaderValue::from_static("GithubArtifactSync/0.1.0"),
+        );
+        headers.insert("Authorization", format!("Bearer {}", token).parse().ok()?);
+
+        headers
+    };
+
+    Some((client, headers))
+}
+
 async fn get_workflow_artifacts(
     repo_owner: &str,
     repo_name: &str,
     run_id: u64,
-    headers: reqwest::header::HeaderMap,
     client: &Client,
+    headers: reqwest::header::HeaderMap,
 ) -> Option<WorkflowArtifactsResponse> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/artifacts",
@@ -128,6 +173,24 @@ async fn get_workflow_artifacts(
     let response_text = response.text().await.ok()?;
 
     serde_json::from_str(&response_text).ok()
+}
+
+async fn download_github_artifact(
+    artifact: &Artifact,
+    client: &Client,
+    headers: reqwest::header::HeaderMap,
+) -> Option<(reqwest::header::HeaderMap, Bytes)> {
+    let response = client
+        .get(&artifact.archive_download_url)
+        .headers(headers)
+        .send()
+        .await
+        .ok()?;
+
+    let response_headers = response.headers().clone();
+    let response_bytes = response.bytes().await.ok()?;
+
+    Some((response_headers, response_bytes))
 }
 
 #[actix_web::post("/api/github/workflow")]
@@ -173,39 +236,26 @@ async fn post_github_workflow(
         return HttpResponse::NoContent();
     }
 
+    if payload.workflow_job.head_branch != data.branch {
+        log::info!("the workflow is for another branch");
+        return HttpResponse::NoContent();
+    }
+
     log::info!("the workflow has been completed, querying for run artifacts");
 
-    let client = reqwest::Client::new();
-
-    let headers = {
-        let mut headers = reqwest::header::HeaderMap::new();
-
-        headers.insert(
-            "Accept",
-            HeaderValue::from_static("application/vnd.github+json"),
-        );
-        headers.insert(
-            "X-GitHub-Api-Version",
-            HeaderValue::from_static("2022-11-28"),
-        );
-        headers.insert(
-            "User-Agent",
-            HeaderValue::from_static("GithubArtifactSync/0.1.0"),
-        );
-        headers.insert(
-            "Authorization",
-            format!("Bearer {}", &data.token).parse().unwrap(),
-        );
-
-        headers
+    let (client, headers) = match build_github_client_and_headers(&data.token) {
+        Some(x) => x,
+        None => {
+            return HttpResponse::InternalServerError();
+        }
     };
 
     let artifacts = match get_workflow_artifacts(
         &payload.repository.owner.login,
         &payload.repository.name,
         payload.workflow_job.run_id,
-        headers.clone(),
         &client,
+        headers.clone(),
     )
     .await
     {
@@ -216,18 +266,32 @@ async fn post_github_workflow(
         }
     };
 
-    log::debug!("{:?}", &artifacts);
+    let artifact = match artifacts
+        .iter()
+        .find(|&artifact| artifact.name == data.artifact)
+    {
+        Some(x) => {
+            log::info!("found an artifact with a matching name, downloading it");
+            x
+        }
+        None => {
+            log::info!("found no artifacts with the corrent name, finishing event");
+            return HttpResponse::NoContent();
+        }
+    };
 
-    if artifacts.len() == 0 {
-        log::info!("No artifacts found, finishing event");
-        return HttpResponse::NoContent();
-    }
+    let (artifact_headers, artifact_bytes) =
+        match download_github_artifact(artifact, &client, headers).await {
+            Some(x) => x,
+            None => {
+                log::warn!("cannot download artifact from github");
+                return HttpResponse::InternalServerError();
+            }
+        };
 
-    log::info!("Found {} artifacts, downloading them", artifacts.len());
+    log::info!("download done, extracting it");
 
-    for artifact in artifacts {
-        dbg!(artifact.archive_download_url);
-    }
+    dbg!(&artifact_headers);
 
     HttpResponse::NoContent()
 }
