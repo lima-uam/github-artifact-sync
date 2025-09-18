@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::{env, io::Cursor, path::PathBuf};
 
 use actix_web::{
     http::header as actix_web_header,
@@ -294,7 +294,25 @@ async fn post_github_workflow(
         }
     };
 
-    dbg!(&artifact_headers);
+    let artifact_bytes = Cursor::new(artifact_bytes);
+
+    let mut artifact = match zip::ZipArchive::new(artifact_bytes) {
+        Ok(x) => x,
+        Err(err) => {
+            log::warn!("cannot decode downloaded archive: {}", err);
+            return HttpResponse::InternalServerError();
+        }
+    };
+
+    match artifact.extract(&data.location) {
+        Ok(_) => {
+            log::info!("extracted zip file contents");
+        }
+        Err(err) => {
+            log::warn!("cannot extract archive contets: {}", err);
+            return HttpResponse::InternalServerError();
+        }
+    };
 
     HttpResponse::NoContent()
 }
