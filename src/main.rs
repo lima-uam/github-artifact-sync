@@ -1,5 +1,6 @@
 use std::{
     env::{self},
+    fs::remove_file,
     io::Cursor,
     os::unix::fs,
     path::PathBuf,
@@ -365,6 +366,13 @@ async fn post_github_workflow(
                 return HttpResponse::InternalServerError();
             }
         };
+
+        if symlink_name.exists() {
+            if let Err(err) = remove_file(&symlink_name) {
+                log::warn!("symlink already exists but cannot be removed: {}", err);
+                return HttpResponse::InternalServerError();
+            }
+        }
 
         match fs::symlink(&symlink_target, &symlink_name) {
             Ok(_) => {
