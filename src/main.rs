@@ -1,4 +1,4 @@
-use std::{env, io::Cursor, path::PathBuf};
+use std::{env, io::Cursor, os::unix::fs, path::PathBuf};
 
 use actix_web::{
     http::header as actix_web_header,
@@ -20,7 +20,8 @@ struct Config {
     token: String,
     branch: String,
     artifact: String,
-    location: PathBuf,
+    output: String,
+    symlink: Option<String>,
 }
 
 impl Config {
@@ -45,9 +46,10 @@ impl Config {
         let artifact = env::var("GH_ARTIFACT_SYNC_ARTIFACT")
             .context("artifact name must be set through GH_ARTIFACT_SYNC_ARTIFACT")?;
 
-        let location = env::var("GH_ARTIFACT_SYNC_LOCATION")
-            .context("output location must be set through GH_ARTIFACT_SYNC_LOCATION")?
-            .parse()?;
+        let output = env::var("GH_ARTIFACT_SYNC_OUTPUT")
+            .context("output location must be set through GH_ARTIFACT_SYNC_OUTPUT")?;
+
+        let symlink = env::var("GH_ARTIFACT_SYNC_SYMLINK").ok();
 
         Ok(Self {
             addr,
@@ -56,8 +58,14 @@ impl Config {
             token,
             branch,
             artifact,
-            location,
+            output,
+            symlink,
         })
+    }
+
+    fn parse_artifact_value(value: &str, head_sha: &str) -> anyhow::Result<PathBuf> {
+        let parsed_str = value.replace("{HEAD_SHA}", head_sha);
+        PathBuf::try_from(parsed_str).context("invalid output path")
     }
 }
 
@@ -304,7 +312,18 @@ async fn post_github_workflow(
         }
     };
 
-    match artifact.extract(&data.location) {
+    let output = match Config::parse_artifact_value(&data.output, &payload.workflow_job.head_sha) {
+        Ok(output) => {
+            log::info!("artifact output location is: {}", &output.to_string_lossy());
+            output
+        }
+        Err(err) => {
+            log::warn!("cannot parse artifact output location: {}", err);
+            return HttpResponse::InternalServerError();
+        }
+    };
+
+    match artifact.extract(&output) {
         Ok(_) => {
             log::info!("extracted zip file contents");
         }
@@ -313,6 +332,33 @@ async fn post_github_workflow(
             return HttpResponse::InternalServerError();
         }
     };
+
+    if let Some(symlink) = &data.symlink {
+        let symlink = match Config::parse_artifact_value(&symlink, &payload.workflow_job.head_sha) {
+            Ok(output) => {
+                log::info!("trying to create symlink to artifact");
+                output
+            }
+            Err(err) => {
+                log::warn!("cannot parse artifact symlink location: {}", err);
+                return HttpResponse::InternalServerError();
+            }
+        };
+
+        match fs::symlink(&output, &symlink) {
+            Ok(_) => {
+                log::info!(
+                    "symlinked artifact output {} as {}",
+                    &output.to_string_lossy(),
+                    &symlink.to_string_lossy()
+                );
+            }
+            Err(err) => {
+                log::warn!("cannot create artifact symlink: {}", err);
+                return HttpResponse::InternalServerError();
+            }
+        }
+    }
 
     HttpResponse::NoContent()
 }
