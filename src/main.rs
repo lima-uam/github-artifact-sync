@@ -1,4 +1,9 @@
-use std::{env, io::Cursor, os::unix::fs, path::PathBuf};
+use std::{
+    env::{self},
+    io::Cursor,
+    os::unix::fs,
+    path::PathBuf,
+};
 
 use actix_web::{
     http::header as actix_web_header,
@@ -63,7 +68,7 @@ impl Config {
         })
     }
 
-    fn parse_artifact_value(value: &str, head_sha: &str) -> anyhow::Result<PathBuf> {
+    fn parse_value(value: &str, head_sha: &str) -> anyhow::Result<PathBuf> {
         let parsed_str = value.replace("{HEAD_SHA}", head_sha);
         PathBuf::try_from(parsed_str).context("invalid output path")
     }
@@ -312,9 +317,9 @@ async fn post_github_workflow(
         }
     };
 
-    let output = match Config::parse_artifact_value(&data.output, &payload.workflow_job.head_sha) {
+    let output_path = match Config::parse_value(&data.output, &payload.workflow_job.head_sha) {
         Ok(output) => {
-            log::info!("artifact output location is: {}", &output.to_string_lossy());
+            log::info!("using output location: {}", &output.to_string_lossy());
             output
         }
         Err(err) => {
@@ -323,7 +328,7 @@ async fn post_github_workflow(
         }
     };
 
-    match artifact.extract(&output) {
+    match artifact.extract(&output_path) {
         Ok(_) => {
             log::info!("extracted zip file contents");
         }
@@ -334,7 +339,7 @@ async fn post_github_workflow(
     };
 
     if let Some(symlink) = &data.symlink {
-        let symlink = match Config::parse_artifact_value(&symlink, &payload.workflow_job.head_sha) {
+        let symlink_name = match Config::parse_value(&symlink, &payload.workflow_job.head_sha) {
             Ok(output) => {
                 log::info!("trying to create symlink to artifact");
                 output
@@ -345,12 +350,28 @@ async fn post_github_workflow(
             }
         };
 
-        match fs::symlink(&output, &symlink) {
+        let symlink_dir = match symlink_name.parent() {
+            Some(x) => x,
+            None => {
+                log::warn!("cannot extract symlink dirname");
+                return HttpResponse::InternalServerError();
+            }
+        };
+
+        let symlink_target = match pathdiff::diff_paths(&output_path, &symlink_dir) {
+            Some(x) => x,
+            None => {
+                log::warn!("cannot construct symlink target");
+                return HttpResponse::InternalServerError();
+            }
+        };
+
+        match fs::symlink(&symlink_target, &symlink_name) {
             Ok(_) => {
                 log::info!(
-                    "symlinked artifact output {} as {}",
-                    &output.to_string_lossy(),
-                    &symlink.to_string_lossy()
+                    "created symlink {} -> {}",
+                    &symlink_name.to_string_lossy(),
+                    &symlink_target.to_string_lossy(),
                 );
             }
             Err(err) => {
