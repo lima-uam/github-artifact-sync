@@ -1,0 +1,38 @@
+# Maintainer: Antonio de Haro <antonio.deharo@lima.sh>
+
+pkgname=github-artifact-sync
+pkgver=0.1.1
+pkgrel=1
+pkgdesc='Service for syncing github workflow artifacts with webhooks'
+arch=('x86_64')
+url='https://github.com/lima-uam/github-artifact-sync'
+license=('MIT OR Apache-2.0')
+depends=(
+    'gcc-libs'
+    'glibc'
+    'libssl.so'
+    'libcrypto.so'
+)
+makedepends=('cargo')
+options=('!lto')
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('6497b7cbf8b8e118aaf9c0e2da7eb1d4f0e8e0bd39f5aa52fa03ffc27bb27814')
+
+build() {
+    cd "${pkgname}-${pkgver}"
+
+    cargo build --release --frozen
+}
+
+package() {
+    cd "${pkgname}-${pkgver}"
+
+    install -Dm755 "target/release/${pkgname}" "${pkgdir}/usr/bin"
+
+    install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}"
+
+    install -Dm644 LICENSE-APACHE "${pkgdir}/usr/share/licenses/${pkgname}"
+    install -Dm644 LICENSE-MIT "${pkgdir}/usr/share/licenses/${pkgname}"
+    install -Dm644 THIRD-PARTY-LICENSES.md "${pkgdir}/usr/share/licenses/${pkgname}"
+}
+
