@@ -1,7 +1,7 @@
 # Maintainer: Antonio de Haro <antonio.deharo@lima.sh>
 
 pkgname=github-artifact-sync
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='Service for syncing github workflow artifacts with webhooks'
 arch=('x86_64')
@@ -16,12 +16,21 @@ depends=(
 makedepends=('cargo')
 options=('!lto')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('6497b7cbf8b8e118aaf9c0e2da7eb1d4f0e8e0bd39f5aa52fa03ffc27bb27814')
+sha256sums=('c71ca3d8c3b99e219718c31326655b620a557669d928f5daf673474b70244941')
 
-build() {
+prepare() {
+    export RUSTUP_TOOLCHAIN=stable
     cd "${pkgname}-${pkgver}"
 
-    cargo build --release --frozen
+    cargo fetch --locked
+}
+
+
+build() {
+    export RUSTUP_TOOLCHAIN=stable
+    cd "${pkgname}-${pkgver}"
+
+    cargo build --frozen --release
 }
 
 package() {

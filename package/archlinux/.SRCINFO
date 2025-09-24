@@ -1,6 +1,6 @@
 pkgbase = github-artifact-sync
 	pkgdesc = Service for syncing github workflow artifacts with webhooks
-	pkgver = 0.1.1
+	pkgver = 0.1.2
 	pkgrel = 1
 	url = https://github.com/lima-uam/github-artifact-sync
 	arch = x86_64
@@ -11,7 +11,7 @@ pkgbase = github-artifact-sync
 	depends = libssl.so
 	depends = libcrypto.so
 	options = !lto
-	source = github-artifact-sync-0.1.1.tar.gz::https://github.com/lima-uam/github-artifact-sync/archive/refs/tags/v0.1.1.tar.gz
-	sha256sums = 6497b7cbf8b8e118aaf9c0e2da7eb1d4f0e8e0bd39f5aa52fa03ffc27bb27814
+	source = github-artifact-sync-0.1.2.tar.gz::https://github.com/lima-uam/github-artifact-sync/archive/refs/tags/v0.1.2.tar.gz
+	sha256sums = c71ca3d8c3b99e219718c31326655b620a557669d928f5daf673474b70244941
 
 pkgname = github-artifact-sync
