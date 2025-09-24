@@ -3,7 +3,7 @@ Description=Service for syncing github workflow artifacts with webhooks
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/github-artifact-sync
+ExecStart=/usr/bin/github-artifact-sync
 EnvironmentFile=/etc/github-artifact-sync.conf
 StandardOutput=journal
 StandardError=journal
