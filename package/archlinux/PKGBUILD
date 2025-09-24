@@ -2,7 +2,7 @@
 
 pkgname=github-artifact-sync
 pkgver=0.1.2
-pkgrel=1
+pkgrel=2
 pkgdesc='Service for syncing github workflow artifacts with webhooks'
 arch=('x86_64')
 url='https://github.com/lima-uam/github-artifact-sync'
@@ -36,12 +36,14 @@ build() {
 package() {
     cd "${pkgname}-${pkgver}"
 
-    install -Dm755 "target/release/${pkgname}" "${pkgdir}/usr/bin"
+    install -Dm755 "target/release/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
 
-    install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}"
+    install -Dm644 package/systemd/github-artifact-sync.service "${pkgdir}/usr/lib/systemd/system/github-artifact-sync.service"
+    install -Dm640 package/systemd/github-artifact-sync.conf "${pkgdir}/etc/github-artifact-sync.conf"
 
-    install -Dm644 LICENSE-APACHE "${pkgdir}/usr/share/licenses/${pkgname}"
-    install -Dm644 LICENSE-MIT "${pkgdir}/usr/share/licenses/${pkgname}"
-    install -Dm644 THIRD-PARTY-LICENSES.md "${pkgdir}/usr/share/licenses/${pkgname}"
+    install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+    install -Dm644 LICENSE-APACHE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-APACHE"
+    install -Dm644 LICENSE-MIT "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-MIT"
+    install -Dm644 THIRD-PARTY-LICENSES.md "${pkgdir}/usr/share/licenses/${pkgname}/THIRD-PARTY-LICENSES.md"
 }
 
