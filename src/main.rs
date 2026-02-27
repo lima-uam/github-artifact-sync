@@ -227,7 +227,7 @@ async fn post_github_workflow(
             log::info!("the event is from a workflow");
         }
         _ => {
-            log::info!("the event is not coming from a workflow, ignoring it");
+            log::info!("the event isn't coming from a workflow, ignoring it");
             return HttpResponse::BadRequest();
         }
     };
@@ -299,7 +299,7 @@ async fn post_github_workflow(
         };
 
     match artifact_headers.get("Content-Type") {
-        Some(x) if x == "zip" => {
+        Some(x) if x == "zip" || x == "application/zip" => {
             log::info!("downloaded artifact zip archive");
         }
         _ => {
