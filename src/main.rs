@@ -158,7 +158,7 @@ fn build_github_client_and_headers(token: &str) -> Option<(Client, reqwest::head
         );
         headers.insert(
             "User-Agent",
-            HeaderValue::from_static("GithubArtifactSync/0.1.0"),
+            HeaderValue::from_static("GithubArtifactSync/0.1.4"),
         );
         headers.insert("Authorization", format!("Bearer {}", token).parse().ok()?);
 
